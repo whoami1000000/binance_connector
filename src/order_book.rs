@@ -79,7 +79,7 @@ pub struct OrderBook<P, Q> {
     asks: BTreeMap<P, Q>,
 }
 
-impl<P: Ord, Q: Zero> OrderBook<P, Q> {
+impl<P: Ord + Clone, Q: Zero> OrderBook<P, Q> {
     pub fn build(symbol: &str, depth: usize) -> Result<Self, OrderBookError> {
         if depth == 0 {
             return Err(OrderBookError::ZeroDepth);
@@ -104,6 +104,14 @@ impl<P: Ord, Q: Zero> OrderBook<P, Q> {
 
     pub fn last_update_id(&self) -> u64 {
         self.last_update_id
+    }
+
+    pub fn best_price(&self) -> Option<(P, P)> {
+        if self.bids.is_empty() || self.asks.is_empty() {
+            return None;
+        }
+
+        Some((self.bids.last_key_value().unwrap().0.clone(), self.asks.first_key_value().unwrap().0.clone()))
     }
 
     pub fn process_update(&mut self, update: Update<P, Q>) -> Result<(), OrderBookError> {
@@ -222,12 +230,15 @@ impl<P: Ord, Q: Zero> OrderBook<P, Q> {
     }
 }
 
-impl<P: Display, Q: Display> Display for OrderBook<P, Q> {
+impl<P: Display + Ord + Clone, Q: Display + Zero> Display for OrderBook<P, Q> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "Symbol: {}\n", self.symbol)?;
         write!(f, "Id: {}\n", self.last_update_id)?;
         if let MappedLocalTime::Single(dt) = Utc.timestamp_millis_opt(self.update_time) {
             write!(f, "Time: {}\n", dt.to_rfc3339())?;
+        }
+        if let Some((b, a)) = self.best_price() {
+            write!(f, "Best Price: Bid={} Ask={}\n", b, a)?;
         }
         write!(f, "Ask:\n")?;
         for (p, q) in self.asks.iter().rev() {
