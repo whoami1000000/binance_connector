@@ -94,7 +94,7 @@ fn gen_subscribe_msg(symbol: &str) -> String {
 async fn run(config: Arc<Config>, tx: Sender<OB>) -> Result<(), Box<dyn std::error::Error>> {
     let notificator = Arc::new(Notify::new());
 
-    let ob = Arc::new(Mutex::new(OB::build(config.depth)?));
+    let ob = Arc::new(Mutex::new(OB::build(&config.symbol, config.depth)?));
 
     let updater = subscribe(
         Arc::clone(&ob),

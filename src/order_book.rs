@@ -1,9 +1,9 @@
-use std::collections::BTreeMap;
-use std::fmt::{Display, Formatter};
-use std::mem;
 use chrono::{MappedLocalTime, TimeZone, Utc};
 use num::Zero;
 use serde::Deserialize;
+use std::collections::BTreeMap;
+use std::fmt::{Display, Formatter};
+use std::mem;
 
 #[derive(Debug)]
 pub enum OrderBookError {
@@ -68,6 +68,7 @@ pub struct Snapshot<P, Q> {
 
 #[derive(Debug, Clone)]
 pub struct OrderBook<P, Q> {
+    symbol: String,
     depth: usize,
     has_snapshot: bool,
     snapshot_id: u64,
@@ -79,12 +80,13 @@ pub struct OrderBook<P, Q> {
 }
 
 impl<P: Ord, Q: Zero> OrderBook<P, Q> {
-    pub fn build(depth: usize) -> Result<Self, OrderBookError> {
+    pub fn build(symbol: &str, depth: usize) -> Result<Self, OrderBookError> {
         if depth == 0 {
             return Err(OrderBookError::ZeroDepth);
         }
 
         Ok(Self {
+            symbol: symbol.to_string(),
             depth,
             has_snapshot: false,
             snapshot_id: 0,
@@ -129,14 +131,10 @@ impl<P: Ord, Q: Zero> OrderBook<P, Q> {
         }
 
         // apply snapshot
-        for (p, q) in snapshot.bids {
-            self.bids.insert(p, q);
-        }
+        Self::apply_layer(snapshot.bids, &mut self.bids);
+        Self::apply_layer(snapshot.asks, &mut self.asks);
 
-        for (p, q) in snapshot.asks {
-            self.asks.insert(p, q);
-        }
-
+        // TODO: use binary search somehow
         let mut start_index = None;
         for (i, u) in self.updates.iter().enumerate() {
             if u.first_update_id <= snapshot.last_update_id && snapshot.last_update_id <= u.final_update_id {
@@ -182,21 +180,8 @@ impl<P: Ord, Q: Zero> OrderBook<P, Q> {
             return Err(OrderBookError::UpdateGaps(self.last_update_id, update.first_update_id));
         }
 
-        for (p, q) in update.bids {
-            if q.is_zero() {
-                let _ = self.bids.remove(&p);
-            } else {
-                self.bids.insert(p, q);
-            }
-        }
-
-        for (p, q) in update.asks {
-            if q.is_zero() {
-                let _ = self.asks.remove(&p);
-            } else {
-                self.asks.insert(p, q);
-            }
-        }
+        Self::apply_layer(update.bids, &mut self.bids);
+        Self::apply_layer(update.asks, &mut self.asks);
 
         self.resize();
 
@@ -209,7 +194,6 @@ impl<P: Ord, Q: Zero> OrderBook<P, Q> {
     fn collect_update(&mut self, update: Update<P, Q>) -> Result<(), OrderBookError> {
         if let Some(last) = self.updates.last() {
             if last.final_update_id + 1 != update.first_update_id {
-                println!("bp2");
                 return Err(OrderBookError::UpdateGaps(last.final_update_id, update.first_update_id));
             }
         }
@@ -226,10 +210,21 @@ impl<P: Ord, Q: Zero> OrderBook<P, Q> {
             self.asks.pop_last();
         }
     }
+
+    fn apply_layer(update: Vec<(P, Q)>, layer: &mut BTreeMap<P, Q>) {
+        for (p, q) in update {
+            if q.is_zero() {
+                let _ = layer.remove(&p);
+            } else {
+                layer.insert(p, q);
+            }
+        }
+    }
 }
 
 impl<P: Display, Q: Display> Display for OrderBook<P, Q> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Symbol: {}\n", self.symbol)?;
         write!(f, "Id: {}\n", self.last_update_id)?;
         if let MappedLocalTime::Single(dt) = Utc.timestamp_millis_opt(self.update_time) {
             write!(f, "Time: {}\n", dt.to_rfc3339())?;
