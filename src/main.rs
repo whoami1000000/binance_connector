@@ -58,9 +58,8 @@ async fn subscribe(ob: Arc<Mutex<OB>>,
     let msg = gen_subscribe_msg(&config.symbol);
     writer.send(msg.into()).await?;
 
-    let cloned_ob = Arc::clone(&ob);
     reader.for_each(move |message| {
-        let ob = cloned_ob.clone();
+        let ob = ob.clone();
         let tx = tx.clone();
         let notificator = notificator.clone();
         async {
@@ -97,10 +96,10 @@ async fn run(config: Arc<Config>, tx: Sender<OB>) -> Result<(), Box<dyn std::err
     let ob = Arc::new(Mutex::new(OB::build(&config.symbol, config.depth)?));
 
     let updater = subscribe(
-        Arc::clone(&ob),
-        Arc::clone(&config),
-        mpsc::Sender::clone(&tx),
-        Arc::clone(&notificator));
+        ob.clone(),
+        config.clone(),
+        tx,
+        notificator.clone());
 
     let snapshot = async {
         notificator.notified().await;
