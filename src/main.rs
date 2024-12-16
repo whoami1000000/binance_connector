@@ -7,13 +7,19 @@ use std::process::exit;
 use std::sync::{Arc, Mutex};
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
+use tokio::sync::mpsc;
 use tokio::sync::mpsc::Sender;
-use tokio::sync::{mpsc, Notify};
 use tokio_tungstenite::tungstenite;
 use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 
 type OB = OrderBook<Decimal, Decimal>;
+type OBUpdate = Update<Decimal, Decimal>;
+type OBSnapshot = Snapshot<Decimal, Decimal>;
 
+enum MDMessage {
+    OrderBookUpdate(OBUpdate),
+    OrderBookSnapshot(OBSnapshot),
+}
 
 async fn connect(url: &str) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>, tokio_tungstenite::tungstenite::Error> {
     match connect_async(url).await {
@@ -25,7 +31,7 @@ async fn connect(url: &str) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>
 async fn handle_update(message: tungstenite::Message,
                        ob: Arc<Mutex<OB>>,
                        tx: Sender<OB>,
-                       notificator: Arc<Notify>) -> Result<(), Box<dyn std::error::Error>> {
+                       config: Arc<Config>) -> Result<(), Box<dyn std::error::Error>> {
     let data = message.into_text()?;
 
     let update = serde_json::from_str::<Update<Decimal, Decimal>>(&data)?;
@@ -34,11 +40,12 @@ async fn handle_update(message: tungstenite::Message,
     {
         let mut ob = ob.lock().unwrap();
         ob.process_update(update).unwrap();
-        if ob.has_snapshot() {
-            msg = Some(ob.clone());
-        } else {
-            notificator.notify_one();
+        if !ob.has_snapshot() {
+            let snapshot = get_snapshot(config).await?;
+            ob.process_snapshot(snapshot)?;
         }
+
+        msg = Some(ob.clone());
     }
 
     if let Some(msg) = msg {
@@ -50,8 +57,7 @@ async fn handle_update(message: tungstenite::Message,
 
 async fn subscribe(ob: Arc<Mutex<OB>>,
                    config: Arc<Config>,
-                   tx: Sender<OB>,
-                   notificator: Arc<Notify>) -> Result<(), Box<dyn std::error::Error>> {
+                   tx: Sender<OB>) -> Result<(), Box<dyn std::error::Error>> {
     let ws = connect(&config.update_url).await?;
     let (mut writer, reader) = ws.split();
 
@@ -60,10 +66,10 @@ async fn subscribe(ob: Arc<Mutex<OB>>,
 
     reader.for_each(move |message| {
         let ob = ob.clone();
+        let config = config.clone();
         let tx = tx.clone();
-        let notificator = notificator.clone();
         async {
-            handle_update(message.unwrap(), ob, tx, notificator).await.unwrap_or_else(|_e| {
+            handle_update(message.unwrap(), ob, tx, config).await.unwrap_or_else(|_e| {
                 // TODO:
             });
         }
@@ -91,26 +97,14 @@ fn gen_subscribe_msg(symbol: &str) -> String {
 }
 
 async fn run(config: Arc<Config>, tx: Sender<OB>) -> Result<(), Box<dyn std::error::Error>> {
-    let notificator = Arc::new(Notify::new());
-
     let ob = Arc::new(Mutex::new(OB::build(&config.symbol, config.depth)?));
 
     let updater = subscribe(
         ob.clone(),
         config.clone(),
-        tx,
-        notificator.clone());
+        tx);
 
-    let snapshot = async {
-        notificator.notified().await;
-        let snap = get_snapshot(config).await.unwrap();
-        let mut ob = ob.lock().unwrap();
-        ob.process_snapshot(snap).unwrap();
-    };
-
-    let _ = tokio::join!(updater, snapshot);
-
-    Ok(())
+    updater.await
 }
 
 
