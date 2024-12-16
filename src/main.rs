@@ -11,6 +11,7 @@ use tokio::sync::mpsc;
 
 // Here we have single order book which is build from updates
 // from many connections taking the latest (best) updates and ignoring others
+#[allow(dead_code)]
 async fn one_order_book_with_many_connections(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
     let config = Arc::new(Config::build(&args)?);
 
@@ -32,6 +33,7 @@ async fn one_order_book_with_many_connections(args: Vec<String>) -> Result<(), B
 
 // Here we have several pairs (subscriber, processor) and they are keeping their own order book.
 // Printer prints an order book with the best id and skipping others
+#[allow(dead_code)]
 async fn many_order_books_with_many_connections(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
     let config = Arc::new(Config::build(&args)?);
 
@@ -58,6 +60,7 @@ async fn many_order_books_with_many_connections(args: Vec<String>) -> Result<(),
     Ok(())
 }
 
+#[allow(dead_code)]
 async fn order_book_and_trades(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
     let config = Arc::new(Config::build(&args)?);
 
