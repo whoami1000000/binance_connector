@@ -107,8 +107,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
 
     // 3 examples, use one !
-    //one_order_book_with_many_connections(args).await?;
-    many_order_books_with_many_connections(args).await?;
+    one_order_book_with_many_connections(args).await?;
+    //many_order_books_with_many_connections(args).await?;
     //order_book_and_trades(args).await?;
 
     Ok(())
