@@ -1,167 +1,95 @@
-use futures_util::{SinkExt, StreamExt};
-use order_book::config::Config;
-use order_book::order_book::{OrderBook, Snapshot, Update};
-use rust_decimal::Decimal;
-use serde_json::json;
+use binance_connector;
+use binance_connector::config::Config;
+use binance_connector::connector::{print_message, process_message, subscribe, Message, SubscriptionType};
+use futures_util::future::join_all;
+use std::future::Future;
+use std::pin::Pin;
 use std::process::exit;
-use std::sync::{Arc, Mutex};
-use tokio::io::AsyncWriteExt;
-use tokio::net::TcpStream;
+use std::sync::Arc;
 use tokio::sync::mpsc;
-use tokio::sync::mpsc::Sender;
-use tokio_tungstenite::tungstenite;
-use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 
-type OB = OrderBook<Decimal, Decimal>;
-type OBUpdate = Update<Decimal, Decimal>;
-type OBSnapshot = Snapshot<Decimal, Decimal>;
 
-enum MDMessage {
-    OrderBookUpdate(OBUpdate),
-    OrderBookSnapshot(OBSnapshot),
-}
+// Here we have single order book which is build from updates
+// from many connections taking the latest (best) updates and ignoring others
+async fn one_order_book_with_many_connections(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
+    let config = Arc::new(Config::build(&args)?);
 
-async fn connect(url: &str) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>, tokio_tungstenite::tungstenite::Error> {
-    match connect_async(url).await {
-        Ok((stream, _)) => Ok(stream),
-        Err(e) => Err(e)
-    }
-}
+    let (u_tx, u_rx) = mpsc::channel::<Message>(1024);
+    let (ob_tx, ob_rx) = mpsc::channel::<Message>(1024);
 
-async fn handle_update(message: tungstenite::Message,
-                       ob: Arc<Mutex<OB>>,
-                       tx: Sender<OB>,
-                       config: Arc<Config>) -> Result<(), Box<dyn std::error::Error>> {
-    let data = message.into_text()?;
-
-    let update = serde_json::from_str::<Update<Decimal, Decimal>>(&data)?;
-
-    let mut msg: Option<OB> = None;
-    {
-        let mut ob = ob.lock().unwrap();
-        ob.process_update(update).unwrap();
-        if !ob.has_snapshot() {
-            let snapshot = get_snapshot(config).await?;
-            ob.process_snapshot(snapshot)?;
-        }
-
-        msg = Some(ob.clone());
-    }
-
-    if let Some(msg) = msg {
-        tx.send(msg).await?;
-    }
+    let futures: Vec<Pin<Box<dyn Future<Output=Result<(), Box<dyn std::error::Error>>>>>> = vec![
+        Box::pin(subscribe(config.clone(), SubscriptionType::OrderBook, u_tx.clone())),
+        Box::pin(subscribe(config.clone(), SubscriptionType::OrderBook, u_tx.clone())),
+        Box::pin(subscribe(config.clone(), SubscriptionType::OrderBook, u_tx.clone())),
+        Box::pin(subscribe(config.clone(), SubscriptionType::OrderBook, u_tx.clone())),
+        Box::pin(process_message(config.clone(), u_rx, ob_tx.clone())),
+        Box::pin(print_message(ob_rx)),
+    ];
+    join_all(futures).await;
 
     Ok(())
 }
 
-async fn subscribe(ob: Arc<Mutex<OB>>,
-                   config: Arc<Config>,
-                   tx: Sender<OB>) -> Result<(), Box<dyn std::error::Error>> {
-    let ws = connect(&config.update_url).await?;
-    let (mut writer, reader) = ws.split();
+// Here we have several pairs (subscriber, processor) and they are keeping their own order book.
+// Printer prints an order book with the best id and skipping others
+async fn many_order_books_with_many_connections(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
+    let config = Arc::new(Config::build(&args)?);
 
-    let msg = gen_subscribe_msg(&config.symbol);
-    writer.send(msg.into()).await?;
+    let (u_tx1, u_rx1) = mpsc::channel::<Message>(1024);
+    let (u_tx2, u_rx2) = mpsc::channel::<Message>(1024);
+    let (u_tx3, u_rx3) = mpsc::channel::<Message>(1024);
+    let (u_tx4, u_rx4) = mpsc::channel::<Message>(1024);
+    let (ob_tx, ob_rx) = mpsc::channel::<Message>(1024);
 
-    reader.for_each(move |message| {
-        let ob = ob.clone();
-        let config = config.clone();
-        let tx = tx.clone();
-        async {
-            handle_update(message.unwrap(), ob, tx, config).await.unwrap_or_else(|_e| {
-                // TODO:
-            });
-        }
-    }).await;
+    let futures: Vec<Pin<Box<dyn Future<Output=Result<(), Box<dyn std::error::Error>>>>>> = vec![
+        Box::pin(subscribe(config.clone(), SubscriptionType::OrderBook, u_tx1)),
+        Box::pin(subscribe(config.clone(), SubscriptionType::OrderBook, u_tx2)),
+        Box::pin(subscribe(config.clone(), SubscriptionType::OrderBook, u_tx3)),
+        Box::pin(subscribe(config.clone(), SubscriptionType::OrderBook, u_tx4)),
+        Box::pin(process_message(config.clone(), u_rx1, ob_tx.clone())),
+        Box::pin(process_message(config.clone(), u_rx2, ob_tx.clone())),
+        Box::pin(process_message(config.clone(), u_rx3, ob_tx.clone())),
+        Box::pin(process_message(config.clone(), u_rx4, ob_tx.clone())),
+        Box::pin(print_message(ob_rx))
+    ];
+
+    join_all(futures).await;
 
     Ok(())
 }
 
-async fn get_snapshot(config: Arc<Config>) -> Result<Snapshot<Decimal, Decimal>, Box<dyn std::error::Error>> {
-    let rsp = reqwest::get(&config.snapshot_url).await?;
-    let body = rsp.text().await?;
-    let snapshot = serde_json::from_str::<Snapshot<Decimal, Decimal>>(&body)?;
-    Ok(snapshot)
+async fn order_book_and_trades(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
+    let config = Arc::new(Config::build(&args)?);
+
+    let (u_tx, u_rx) = mpsc::channel::<Message>(1024);
+    let (ob_tx, ob_rx) = mpsc::channel::<Message>(1024);
+
+    let futures: Vec<Pin<Box<dyn Future<Output=Result<(), Box<dyn std::error::Error>>>>>> = vec![
+        Box::pin(subscribe(config.clone(), SubscriptionType::OrderBook, u_tx.clone())),
+        Box::pin(subscribe(config.clone(), SubscriptionType::OrderBook, u_tx.clone())),
+        Box::pin(subscribe(config.clone(), SubscriptionType::Trades, u_tx.clone())),
+        Box::pin(process_message(config.clone(), u_rx, ob_tx.clone())),
+        Box::pin(print_message(ob_rx)),
+    ];
+
+    join_all(futures).await;
+
+    Ok(())
 }
-
-fn gen_subscribe_msg(symbol: &str) -> String {
-    let msg = json!({
-            "method": "SUBSCRIBE",
-            "params": [
-                format!("{}@depth@100ms", symbol)
-            ],
-            "id": 1
-        });
-    msg.to_string()
-}
-
-async fn run(config: Arc<Config>, tx: Sender<OB>) -> Result<(), Box<dyn std::error::Error>> {
-    let ob = Arc::new(Mutex::new(OB::build(&config.symbol, config.depth)?));
-
-    let updater = subscribe(
-        ob.clone(),
-        config.clone(),
-        tx);
-
-    updater.await
-}
-
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args: Vec<String> = std::env::args().collect();
-    let config = Arc::new(Config::build(&args)?);
-
-    let (tx, mut rx) = mpsc::channel::<OB>(1024);
-
-    let printer = async {
-        let mut last_id: u64 = 0;
-        while let Some(ob) = rx.recv().await {
-            if ob.last_update_id() > last_id { // print the best order book !
-                last_id = ob.last_update_id();
-                tokio::io::stdout().write(ob.to_string().as_bytes()).await.unwrap();
-            }
-        }
-    };
-
-    let updater = run(config.clone(), tx.clone());
-
     tokio::spawn(async {
         tokio::signal::ctrl_c().await.unwrap();
         exit(0);
     });
 
-    let _ = tokio::join!(printer, updater);
+    let args: Vec<String> = std::env::args().collect();
+
+    // 3 examples, use one !
+    one_order_book_with_many_connections(args).await?;
+    //many_order_books_with_many_connections(args).await?;
+    //order_book_and_trades(args).await?;
 
     Ok(())
-
-    /*let mut ob = OrderBook::<i32, i32>::build(2).unwrap();
-
-    let u1 = Update {
-        first_update_id: 1,
-        final_update_id: 3,
-        previous_final_update_id: 0,
-        bids: vec![(11, 1), (12, 1)],
-        asks: vec![(21, 1), (22, 1)],
-    };
-    let u2 = Update {
-        first_update_id: 4,
-        final_update_id: 6,
-        previous_final_update_id: 3,
-        bids: vec![(10, 2), (11, 2)],
-        asks: vec![(20, 2), (21, 2)],
-    };
-
-    ob.process_update(u1);
-    ob.process_update(u2);
-
-    let snapshot = Snapshot {
-        last_update_id: 5,
-        bids: vec![(9, 3), (10, 4)],
-        asks: vec![(19, 4), (20, 3)],
-    };
-    ob.process_snapshot(snapshot);
-
-    println!("{}", ob);*/
 }

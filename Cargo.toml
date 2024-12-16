@@ -1,5 +1,5 @@
 [package]
-name = "order_book"
+name = "binance_connector"
 version = "0.1.0"
 edition = "2021"
 

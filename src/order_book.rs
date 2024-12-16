@@ -171,6 +171,7 @@ impl<P: Ord + Clone, Q: Zero> OrderBook<P, Q> {
 
     pub fn reset(&mut self) {
         self.has_snapshot = false;
+        self.snapshot_id = 0;
         self.last_update_id = 0;
         self.updates.clear();
         self.bids.clear();
@@ -232,6 +233,7 @@ impl<P: Ord + Clone, Q: Zero> OrderBook<P, Q> {
 
 impl<P: Display + Ord + Clone, Q: Display + Zero> Display for OrderBook<P, Q> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Order Book\n")?;
         write!(f, "Symbol: {}\n", self.symbol)?;
         write!(f, "Id: {}\n", self.last_update_id)?;
         if let MappedLocalTime::Single(dt) = Utc.timestamp_millis_opt(self.update_time) {
