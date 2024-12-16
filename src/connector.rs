@@ -7,6 +7,8 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
+use tokio_util::sync::CancellationToken;
+
 
 type OB = crate::order_book::OrderBook<Decimal, Decimal>;
 type OBUpdate = crate::order_book::Update<Decimal, Decimal>;
@@ -26,37 +28,35 @@ pub enum Message {
 }
 
 pub async fn subscribe(config: Arc<Config>,
-                       subscription: SubscriptionType,
-                       tx: Sender<Message>) -> Result<(), Box<dyn std::error::Error>> {
-    let ws = connect(&config.update_url).await?;
-    let (mut writer, reader) = ws.split();
+                       subscription_type: SubscriptionType,
+                       tx: Sender<Message>,
+                       token: CancellationToken) -> Result<(), Box<dyn std::error::Error>> {
+    let connection = connect(&config.update_url).await?;
+    let (mut writer, mut reader) = connection.split();
 
-    let msg = gen_subscribe_msg(&config.symbol, &subscription);
-    writer.send(msg.into()).await?; // TODO
+    let subscription_request_body = gen_subscribe_msg(&config.symbol, &subscription_type);
+    writer.send(subscription_request_body.into()).await?;
 
-    reader.for_each(move |message| {
-        let tx = tx.clone();
-        let subscription = subscription.clone();
-        async move {
-            let data = message.unwrap().into_text().unwrap(); // TODO
-            match subscription {
-                SubscriptionType::Trades => {
-                    if let Ok(trade) = serde_json::from_str::<Trade>(&data) {
-                        let _ = tx.send(Message::TradeUpdate(trade)).await;
-                    } else {
-                        //
-                    }
+    while let Some(Ok(msg)) = reader.next().await {
+        let data = msg.into_text().unwrap();
+        match subscription_type {
+            SubscriptionType::Trades => {
+                if let Ok(trade) = serde_json::from_str::<Trade>(&data) {
+                    tx.send(Message::TradeUpdate(trade)).await?
                 }
-                SubscriptionType::OrderBook => {
-                    if let Ok(update) = serde_json::from_str::<OBUpdate>(&data) {
-                        let _ = tx.send(Message::OrderBookUpdate(update)).await;
-                    } else {
-                        //
-                    }
+            }
+            SubscriptionType::OrderBook => {
+                if let Ok(update) = serde_json::from_str::<OBUpdate>(&data) {
+                    tx.send(Message::OrderBookUpdate(update)).await?
                 }
             }
         }
-    }).await;
+
+        if token.is_cancelled() {
+            println!("cancelled subscription");
+            break;
+        }
+    }
 
     Ok(())
 }
@@ -69,14 +69,15 @@ pub async fn process_message(config: Arc<Config>, mut rx: Receiver<Message>, tx:
                 match ob.process_update(update) {
                     Ok(_) => {
                         if !ob.has_snapshot() {
-                            let snapshot = get_order_book_snapshot(config.clone()).await?;
-                            ob.process_snapshot(snapshot)?;
+                            if let Ok(snapshot) = get_order_book_snapshot(config.clone()).await {
+                                ob.process_snapshot(snapshot)?; // TODO
+                            }
                         } else {
                             tx.send(Message::OrderBook(ob.clone())).await?;
                         }
                     }
                     Err(e) => {
-                        eprintln!("Error processing update: {:?}", e);
+                        eprintln!("Error processing message: {:?}", e);
                         ob.reset();
                     }
                 }
@@ -153,4 +154,3 @@ async fn get_order_book_snapshot(config: Arc<Config>) -> Result<OBSnapshot, Box<
     let snapshot = serde_json::from_str::<OBSnapshot>(&body)?;
     Ok(snapshot)
 }
-
