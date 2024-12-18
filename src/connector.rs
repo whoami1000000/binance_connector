@@ -110,7 +110,7 @@ pub async fn process_message(config: Arc<Config>, mut rx: Receiver<Message>, tx:
                         }
                     }
                     Err(e) => {
-                        tokio::io::stderr().write(format!("Error processing message: {}", e).as_bytes()).await?;
+                        tokio::io::stderr().write(format!("Error processing message: {}\n", e).as_bytes()).await?;
                         ob.reset();
                     }
                 }
