@@ -6,7 +6,7 @@ use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::{Receiver, Sender};
-use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
+use tokio_tungstenite::tungstenite;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -50,7 +50,7 @@ pub async fn subscribe(config: Arc<Config>,
                     }
 
                     match msg {
-                        tokio_tungstenite::tungstenite::Message::Text(data) => {
+                        tungstenite::Message::Text(data) => {
                             match subscription_type {
                                 SubscriptionType::Trades => {
                                     if let Ok(trade) = serde_json::from_str::<Trade>(&data) {
@@ -68,12 +68,12 @@ pub async fn subscribe(config: Arc<Config>,
                                 }
                             }
                         }
-                        tokio_tungstenite::tungstenite::Message::Ping(data) => {
+                        tungstenite::Message::Ping(data) => {
                             println!("Ping: {:?}", data);
                             // we should send the same content back by binance requirements
-                            writer.send(tokio_tungstenite::tungstenite::Message::Pong(data)).await?;
+                            writer.send(tungstenite::Message::Pong(data)).await?;
                         }
-                        tokio_tungstenite::tungstenite::Message::Close(_) => {
+                        tungstenite::Message::Close(_) => {
                             println!("close");
                             break; // reconnect
                         }
@@ -174,8 +174,8 @@ fn create_subscription(symbol: &str, subscription: &SubscriptionType) -> String 
     msg.to_string()
 }
 
-async fn connect(url: &str) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>, tokio_tungstenite::tungstenite::Error> {
-    match connect_async(url).await {
+async fn connect(url: &str) -> Result<tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<TcpStream>>, tokio_tungstenite::tungstenite::Error> {
+    match tokio_tungstenite::connect_async(url).await {
         Ok((stream, _)) => Ok(stream),
         Err(e) => Err(e)
     }
