@@ -45,26 +45,39 @@ pub async fn subscribe(config: Arc<Config>,
                 }
 
                 while let Some(Ok(msg)) = reader.next().await {
-                    let data = msg.into_text().unwrap();
-                    match subscription_type {
-                        SubscriptionType::Trades => {
-                            if let Ok(trade) = serde_json::from_str::<Trade>(&data) {
-                                tx.send(Message::TradeUpdate(trade)).await?
-                            } else {
-                                eprintln!("error deserializing trades: {:?}", data);
-                            }
-                        }
-                        SubscriptionType::OrderBook => {
-                            if let Ok(update) = serde_json::from_str::<OBUpdate>(&data) {
-                                tx.send(Message::OrderBookUpdate(update)).await?
-                            } else {
-                                eprintln!("error deserializing order book: {:?}", data);
-                            }
-                        }
-                    }
-
                     if token.is_cancelled() {
                         break;
+                    }
+
+                    match msg {
+                        tokio_tungstenite::tungstenite::Message::Text(data) => {
+                            match subscription_type {
+                                SubscriptionType::Trades => {
+                                    if let Ok(trade) = serde_json::from_str::<Trade>(&data) {
+                                        tx.send(Message::TradeUpdate(trade)).await?
+                                    } else {
+                                        eprintln!("error deserializing trades: {:?}", data);
+                                    }
+                                }
+                                SubscriptionType::OrderBook => {
+                                    if let Ok(update) = serde_json::from_str::<OBUpdate>(&data) {
+                                        tx.send(Message::OrderBookUpdate(update)).await?
+                                    } else {
+                                        eprintln!("error deserializing order book: {:?}", data);
+                                    }
+                                }
+                            }
+                        }
+                        tokio_tungstenite::tungstenite::Message::Ping(data) => {
+                            println!("Ping: {:?}", data);
+                            // we should send the same content back by binance requirements
+                            writer.send(tokio_tungstenite::tungstenite::Message::Pong(data)).await?;
+                        }
+                        tokio_tungstenite::tungstenite::Message::Close(_) => {
+                            println!("close");
+                            break; // reconnect
+                        }
+                        _ => continue,
                     }
                 }
             }
