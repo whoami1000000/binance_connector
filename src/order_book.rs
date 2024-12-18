@@ -173,6 +173,7 @@ impl<P: Ord + Clone, Q: Zero> OrderBook<P, Q> {
         self.has_snapshot = false;
         self.snapshot_id = 0;
         self.last_update_id = 0;
+        self.update_time = 0;
         self.updates.clear();
         self.bids.clear();
         self.asks.clear();
