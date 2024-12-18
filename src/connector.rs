@@ -32,7 +32,8 @@ pub async fn subscribe(config: Arc<Config>,
                        tx: Sender<Message>,
                        token: CancellationToken) -> Result<(), Box<dyn std::error::Error>> {
     'outer: while !token.is_cancelled() {
-        println!("connecting to {}", config.update_url);
+        tokio::io::stdout().write(format!("connecting to {}\n", config.update_url).as_bytes()).await?;
+
         let connection = connect(&config.update_url).await;
         match connection {
             Ok(connection) => {
@@ -40,7 +41,7 @@ pub async fn subscribe(config: Arc<Config>,
 
                 let subscription = create_subscription(&config.symbol, &subscription_type);
                 if let Err(e) = writer.send(subscription.into()).await {
-                    eprintln!("error sending subscription request: {:?}", e);
+                    tokio::io::stderr().write(format!("error sending subscription request: {}\n", e).as_bytes()).await?;
                     continue; // reconnect
                 }
 
@@ -56,25 +57,25 @@ pub async fn subscribe(config: Arc<Config>,
                                     if let Ok(trade) = serde_json::from_str::<Trade>(&data) {
                                         tx.send(Message::TradeUpdate(trade)).await?
                                     } else {
-                                        eprintln!("error deserializing trades: {:?}", data);
+                                        tokio::io::stderr().write(format!("error receiving trades: {}\n", data).as_bytes()).await?;
                                     }
                                 }
                                 SubscriptionType::OrderBook => {
                                     if let Ok(update) = serde_json::from_str::<OBUpdate>(&data) {
                                         tx.send(Message::OrderBookUpdate(update)).await?
                                     } else {
-                                        eprintln!("error deserializing order book: {:?}", data);
+                                        tokio::io::stderr().write(format!("error receiving order book: {}\n", data).as_bytes()).await?;
                                     }
                                 }
                             }
                         }
                         tungstenite::Message::Ping(data) => {
-                            println!("Ping: {:?}", data);
+                            tokio::io::stdout().write(format!("Pong: {:?}\n", data).as_bytes()).await?;
                             // we should send the same content back by binance requirements
                             writer.send(tungstenite::Message::Pong(data)).await?;
                         }
                         tungstenite::Message::Close(_) => {
-                            println!("close");
+                            tokio::io::stdout().write("close\n".as_bytes()).await?;
                             break; // reconnect
                         }
                         _ => continue,
@@ -82,14 +83,14 @@ pub async fn subscribe(config: Arc<Config>,
                 }
             }
             Err(e) => {
-                eprintln!("couldn't connect to websocket due to {:?}", e);
+                tokio::io::stderr().write(format!("couldn't connect to websocket due to {}\n", e).as_bytes()).await?;
                 tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
                 continue; // try again
             }
         }
     }
 
-    println!("cancelled subscription");
+    tokio::io::stdout().write("cancelled subscription\n".as_bytes()).await?;
     Ok(())
 }
 pub async fn process_message(config: Arc<Config>, mut rx: Receiver<Message>, tx: Sender<Message>) -> Result<(), Box<dyn std::error::Error>> {
@@ -109,7 +110,7 @@ pub async fn process_message(config: Arc<Config>, mut rx: Receiver<Message>, tx:
                         }
                     }
                     Err(e) => {
-                        eprintln!("Error processing message: {:?}", e);
+                        tokio::io::stderr().write(format!("Error processing message: {}", e).as_bytes()).await?;
                         ob.reset();
                     }
                 }
