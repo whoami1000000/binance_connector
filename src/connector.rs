@@ -153,21 +153,21 @@ fn create_subscription(symbol: &str, subscription: &SubscriptionType) -> String 
     let msg = match subscription {
         SubscriptionType::Trades => {
             json!({
-            "method": "SUBSCRIBE",
-            "params": [
-                format!("{}@aggTrade", symbol)
-            ],
-            "id": id.to_string()
-        })
+                "method": "SUBSCRIBE",
+                "params": [
+                    format!("{}@aggTrade", symbol)
+                ],
+                "id": id.to_string()
+            })
         }
         SubscriptionType::OrderBook => {
             json!({
-            "method": "SUBSCRIBE",
-            "params": [
-                format!("{}@depth@100ms", symbol)
-            ],
-            "id": id.to_string()
-        })
+                "method": "SUBSCRIBE",
+                "params": [
+                    format!("{}@depth@100ms", symbol)
+                ],
+                "id": id.to_string()
+            })
         }
     };
 
