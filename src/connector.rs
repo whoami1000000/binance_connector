@@ -32,6 +32,7 @@ pub async fn subscribe(config: Arc<Config>,
                        tx: Sender<Message>,
                        token: CancellationToken) -> Result<(), Box<dyn std::error::Error>> {
     while !token.is_cancelled() {
+        println!("connecting to {}", config.update_url);
         let connection = connect(&config.update_url).await;
         match connection {
             Ok(connection) => {
