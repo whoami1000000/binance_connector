@@ -50,11 +50,15 @@ pub async fn subscribe(config: Arc<Config>,
                         SubscriptionType::Trades => {
                             if let Ok(trade) = serde_json::from_str::<Trade>(&data) {
                                 tx.send(Message::TradeUpdate(trade)).await?
+                            } else {
+                                eprintln!("error deserializing trades: {:?}", data);
                             }
                         }
                         SubscriptionType::OrderBook => {
                             if let Ok(update) = serde_json::from_str::<OBUpdate>(&data) {
                                 tx.send(Message::OrderBookUpdate(update)).await?
+                            } else {
+                                eprintln!("error deserializing order book: {:?}", data);
                             }
                         }
                     }
