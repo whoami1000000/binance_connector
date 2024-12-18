@@ -31,7 +31,7 @@ pub async fn subscribe(config: Arc<Config>,
                        subscription_type: SubscriptionType,
                        tx: Sender<Message>,
                        token: CancellationToken) -> Result<(), Box<dyn std::error::Error>> {
-    while !token.is_cancelled() {
+    'outer: while !token.is_cancelled() {
         println!("connecting to {}", config.update_url);
         let connection = connect(&config.update_url).await;
         match connection {
@@ -46,7 +46,7 @@ pub async fn subscribe(config: Arc<Config>,
 
                 while let Some(Ok(msg)) = reader.next().await {
                     if token.is_cancelled() {
-                        break;
+                        break 'outer;
                     }
 
                     match msg {
