@@ -8,7 +8,7 @@ use tokio::net::TcpStream;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 use tokio_util::sync::CancellationToken;
-
+use uuid::Uuid;
 
 type OB = crate::order_book::OrderBook<Decimal, Decimal>;
 type OBUpdate = crate::order_book::Update<Decimal, Decimal>;
@@ -31,33 +31,47 @@ pub async fn subscribe(config: Arc<Config>,
                        subscription_type: SubscriptionType,
                        tx: Sender<Message>,
                        token: CancellationToken) -> Result<(), Box<dyn std::error::Error>> {
-    let connection = connect(&config.update_url).await?;
-    let (mut writer, mut reader) = connection.split();
+    while !token.is_cancelled() {
+        let connection = connect(&config.update_url).await;
+        match connection {
+            Ok(connection) => {
+                let (mut writer, mut reader) = connection.split();
 
-    let subscription_request_body = gen_subscribe_msg(&config.symbol, &subscription_type);
-    writer.send(subscription_request_body.into()).await?;
+                let subscription = create_subscription(&config.symbol, &subscription_type);
+                if let Err(e) = writer.send(subscription.into()).await {
+                    eprintln!("error sending subscription request: {:?}", e);
+                    continue; // reconnect
+                }
 
-    while let Some(Ok(msg)) = reader.next().await {
-        let data = msg.into_text().unwrap();
-        match subscription_type {
-            SubscriptionType::Trades => {
-                if let Ok(trade) = serde_json::from_str::<Trade>(&data) {
-                    tx.send(Message::TradeUpdate(trade)).await?
+                while let Some(Ok(msg)) = reader.next().await {
+                    let data = msg.into_text().unwrap();
+                    match subscription_type {
+                        SubscriptionType::Trades => {
+                            if let Ok(trade) = serde_json::from_str::<Trade>(&data) {
+                                tx.send(Message::TradeUpdate(trade)).await?
+                            }
+                        }
+                        SubscriptionType::OrderBook => {
+                            if let Ok(update) = serde_json::from_str::<OBUpdate>(&data) {
+                                tx.send(Message::OrderBookUpdate(update)).await?
+                            }
+                        }
+                    }
+
+                    if token.is_cancelled() {
+                        break;
+                    }
                 }
             }
-            SubscriptionType::OrderBook => {
-                if let Ok(update) = serde_json::from_str::<OBUpdate>(&data) {
-                    tx.send(Message::OrderBookUpdate(update)).await?
-                }
+            Err(e) => {
+                eprintln!("couldn't connect to websocket due to {:?}", e);
+                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                continue; // try again
             }
-        }
-
-        if token.is_cancelled() {
-            println!("cancelled subscription");
-            break;
         }
     }
 
+    println!("cancelled subscription");
     Ok(())
 }
 pub async fn process_message(config: Arc<Config>, mut rx: Receiver<Message>, tx: Sender<Message>) -> Result<(), Box<dyn std::error::Error>> {
@@ -116,7 +130,8 @@ pub async fn print_message(mut rx: Receiver<Message>) -> Result<(), Box<dyn std:
     Ok(())
 }
 
-fn gen_subscribe_msg(symbol: &str, subscription: &SubscriptionType) -> String {
+fn create_subscription(symbol: &str, subscription: &SubscriptionType) -> String {
+    let id = Uuid::new_v4();
     let msg = match subscription {
         SubscriptionType::Trades => {
             json!({
@@ -124,7 +139,7 @@ fn gen_subscribe_msg(symbol: &str, subscription: &SubscriptionType) -> String {
             "params": [
                 format!("{}@aggTrade", symbol)
             ],
-            "id": 1
+            "id": id.to_string()
         })
         }
         SubscriptionType::OrderBook => {
@@ -133,7 +148,7 @@ fn gen_subscribe_msg(symbol: &str, subscription: &SubscriptionType) -> String {
             "params": [
                 format!("{}@depth@100ms", symbol)
             ],
-            "id": 1
+            "id": id.to_string()
         })
         }
     };
