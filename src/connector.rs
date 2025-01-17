@@ -99,11 +99,11 @@ pub async fn process_message(config: Arc<Config>, mut rx: Receiver<Message>, tx:
     while let Some(msg) = rx.recv().await {
         match msg {
             Message::OrderBookUpdate(update) => {
-                match ob.process_update(update) {
+                match ob.process_update(&update) {
                     Ok(_) => {
                         if !ob.has_snapshot() {
                             if let Ok(snapshot) = get_order_book_snapshot(config.clone()).await {
-                                ob.process_snapshot(snapshot)?; // TODO
+                                ob.process_snapshot(&snapshot)?; // TODO
                             }
                         } else {
                             tx.send(Message::OrderBook(ob.clone())).await?;

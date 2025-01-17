@@ -79,7 +79,7 @@ pub struct OrderBook<P, Q> {
     asks: BTreeMap<P, Q>,
 }
 
-impl<P: Ord + Clone, Q: Zero> OrderBook<P, Q> {
+impl<P: Ord + Clone, Q: Zero + Clone> OrderBook<P, Q> {
     pub fn build(symbol: &str, depth: usize) -> Result<Self, OrderBookError> {
         if depth == 0 {
             return Err(OrderBookError::ZeroDepth);
@@ -114,15 +114,15 @@ impl<P: Ord + Clone, Q: Zero> OrderBook<P, Q> {
         Some((self.bids.last_key_value().unwrap().0.clone(), self.asks.first_key_value().unwrap().0.clone()))
     }
 
-    pub fn process_update(&mut self, update: Update<P, Q>) -> Result<(), OrderBookError> {
+    pub fn process_update(&mut self, update: &Update<P, Q>) -> Result<(), OrderBookError> {
         if self.has_snapshot {
-            self.apply_update(update)
+            self.apply_update(&update)
         } else {
-            self.collect_update(update)
+            self.collect_update(&update)
         }
     }
 
-    pub fn process_snapshot(&mut self, snapshot: Snapshot<P, Q>) -> Result<(), OrderBookError> {
+    pub fn process_snapshot(&mut self, snapshot: &Snapshot<P, Q>) -> Result<(), OrderBookError> {
         if self.has_snapshot {
             return Err(OrderBookError::SnapshotExists(self.last_update_id, snapshot.last_update_id));
         }
@@ -139,8 +139,8 @@ impl<P: Ord + Clone, Q: Zero> OrderBook<P, Q> {
         }
 
         // apply snapshot
-        Self::apply_layer(snapshot.bids, &mut self.bids);
-        Self::apply_layer(snapshot.asks, &mut self.asks);
+        Self::apply_layer(&snapshot.bids, &mut self.bids);
+        Self::apply_layer(&snapshot.asks, &mut self.asks);
 
         // TODO: use binary search somehow
         let mut start_index = None;
@@ -155,7 +155,7 @@ impl<P: Ord + Clone, Q: Zero> OrderBook<P, Q> {
             let mut updates = mem::take(&mut self.updates);
             let updates = updates.drain(i..);
             for u in updates {
-                self.apply_update(u)?;
+                self.apply_update(&u)?;
             }
         } else {
             self.last_update_id = snapshot.last_update_id;
@@ -181,7 +181,7 @@ impl<P: Ord + Clone, Q: Zero> OrderBook<P, Q> {
 
     // private
 
-    fn apply_update(&mut self, update: Update<P, Q>) -> Result<(), OrderBookError> {
+    fn apply_update(&mut self, update: &Update<P, Q>) -> Result<(), OrderBookError> {
         if update.final_update_id <= self.last_update_id {
             return Ok(()); // TODO: should we skip it ???
         }
@@ -190,8 +190,8 @@ impl<P: Ord + Clone, Q: Zero> OrderBook<P, Q> {
             return Err(OrderBookError::UpdateGaps(self.last_update_id, update.first_update_id));
         }
 
-        Self::apply_layer(update.bids, &mut self.bids);
-        Self::apply_layer(update.asks, &mut self.asks);
+        Self::apply_layer(&update.bids, &mut self.bids);
+        Self::apply_layer(&update.asks, &mut self.asks);
 
         self.resize();
 
@@ -201,13 +201,13 @@ impl<P: Ord + Clone, Q: Zero> OrderBook<P, Q> {
         Ok(())
     }
 
-    fn collect_update(&mut self, update: Update<P, Q>) -> Result<(), OrderBookError> {
+    fn collect_update(&mut self, update: &Update<P, Q>) -> Result<(), OrderBookError> {
         if let Some(last) = self.updates.last() {
             if last.final_update_id + 1 != update.first_update_id {
                 return Err(OrderBookError::UpdateGaps(last.final_update_id, update.first_update_id));
             }
         }
-        self.updates.push(update);
+        self.updates.push(update.clone());
         Ok(())
     }
 
@@ -221,18 +221,18 @@ impl<P: Ord + Clone, Q: Zero> OrderBook<P, Q> {
         }
     }
 
-    fn apply_layer(update: Vec<(P, Q)>, layer: &mut BTreeMap<P, Q>) {
+    fn apply_layer(update: &Vec<(P, Q)>, layer: &mut BTreeMap<P, Q>) {
         for (p, q) in update {
             if q.is_zero() {
                 let _ = layer.remove(&p);
             } else {
-                layer.insert(p, q);
+                layer.insert(p.clone(), q.clone());
             }
         }
     }
 }
 
-impl<P: Display + Ord + Clone, Q: Display + Zero> Display for OrderBook<P, Q> {
+impl<P: Display + Ord + Clone, Q: Display + Zero + Clone> Display for OrderBook<P, Q> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "Order Book\n")?;
         write!(f, "Symbol: {}\n", self.symbol)?;
